@@ -1,4 +1,5 @@
-"""Azerbaijani Streamlit decision-support demonstration for VoltVAR AI."""
+"""Guided Azerbaijani VoltVAR decision-support demonstration."""
+import copy
 from pathlib import Path
 import sys
 
@@ -15,253 +16,352 @@ from voltvar.experiment import run_day
 from voltvar.forecast import evaluate_forecasts
 from voltvar.network import build_network
 from voltvar.power import PowerFlowError, run_powerflow, set_loads
+from voltvar.ui.interpretation import (PRIMARY_KEYS, change_lines, comparison_rows,
+    equipment_lines, explanation_sections, formatted_value, metric_interpretation,
+    operating_status, result_summary)
+from voltvar.ui.text import (CONTROLLERS, GLOSSARY, METRICS, METRIC_HELP, MODEL_LABELS,
+    MODEL_NAMES, SCENARIOS, STEPS, T)
 
-
-st.set_page_config(page_title="VoltVAR AI", page_icon="⚡", layout="wide")
-st.markdown("""<style>
-.stApp {background:#0e1728;color:#e6eef8}
-[data-testid=stMetric] {background:#17263d;border:1px solid #334b68;border-radius:12px;padding:12px}
-</style>""", unsafe_allow_html=True)
+st.set_page_config(page_title=T["title"], page_icon="⚡", layout="wide")
+st.markdown("""<style>.stApp{background:#0e1728;color:#e6eef8}
+[data-testid=stMetric]{background:#17263d;border:1px solid #334b68;border-radius:12px;padding:12px}
+[data-testid=stAlert] * {color:#e6eef8 !important}</style>""",
+            unsafe_allow_html=True)
 cfg = load_config()
 
 
-def show_metrics(m: dict):
-    a, b, c, d, e, f = st.columns(6)
-    a.metric("Mənbə P", f"{m['p_source_mw']:.2f} MW", help="AC power flow nəticəsi: xarici şəbəkədən aktiv güc")
-    b.metric("Mənbə Q", f"{m['q_source_mvar']:.2f} MVAr", help="Müsbət Q induktiv yük üçün mənbədən idxaldır")
-    c.metric("Güc əmsalı", f"{m['source_pf']:.3f}")
-    d.metric("Aktiv itki", f"{m['p_loss_mw']*1000:.1f} kW")
-    e.metric("Vmin", f"{m['vmin_pu']:.3f} pu")
-    f.metric("Vmax", f"{m['vmax_pu']:.3f} pu")
+def clear_demo():
+    for key in ("workflow_step", "navigation", "nav_target", "selected_mode", "applied_mode", "device_state",
+                "baseline_metrics", "regime_before", "regime_metrics", "outcome",
+                "pre_optimization_state", "day_result", "forecast_result", "wait_dwell",
+                "seed_input", "tap_locked", "use_forecast", "cap_available_1",
+                "cap_available_2", "cap_available_3"):
+        st.session_state.pop(key, None)
 
 
-def voltage_chart(before: dict, after: dict | None = None):
+def go_to(step):
+    st.session_state["workflow_step"] = step
+    st.session_state["nav_target"] = step
+    st.rerun()
+
+
+def show_cards(metrics):
+    for start in (0, 3):
+        for column, key in zip(st.columns(3), PRIMARY_KEYS[start:start + 3]):
+            column.metric(METRICS[key][0], formatted_value(metrics, key), help=METRIC_HELP[key])
+            column.caption(metric_interpretation(metrics, key, cfg))
+
+
+def show_status(metrics):
+    status = operating_status(metrics, cfg)
+    if status == T["outside_status"]:
+        st.error(status)
+    elif status == T["attention_status"]:
+        st.warning(status)
+    else:
+        st.success(status)
+
+
+def voltage_chart(before, after):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(y=before["bus_voltages"], mode="lines+markers", name="Əvvəl"))
-    if after:
-        fig.add_trace(go.Scatter(y=after["bus_voltages"], mode="lines+markers", name="Sonra"))
-    fig.add_hline(y=cfg["operating"]["voltage_min_pu"], line_dash="dash", line_color="orange")
-    fig.add_hline(y=cfg["operating"]["voltage_max_pu"], line_dash="dash", line_color="orange")
-    fig.update_layout(xaxis_title="Şin indeksi", yaxis_title="Gərginlik (pu)", height=330,
+    for name, metrics in ((T["before"], before), (T["after"], after)):
+        fig.add_trace(go.Scatter(y=metrics["bus_voltages"], mode="lines+markers", name=name))
+    for bound, label in (("voltage_min_pu", T["lower_bound"]), ("voltage_max_pu", T["upper_bound"])):
+        fig.add_hline(y=cfg["operating"][bound], line_dash="dash", line_color="#f8b560", annotation_text=label)
+    fig.update_layout(xaxis_title=T["bus_axis"], yaxis_title=T["voltage_axis"], height=380,
                       paper_bgcolor="#17263d", plot_bgcolor="#17263d", font_color="#e6eef8")
     st.plotly_chart(fig, width="stretch")
 
 
-def candidate_view(rows: list) -> pd.DataFrame:
-    return pd.DataFrame([{
-        "CB1": "ON" if r["caps"][0] else "OFF", "CB2": "ON" if r["caps"][1] else "OFF",
-        "CB3": "ON" if r["caps"][2] else "OFF", "OLTC tap": r["tap"],
-        "Uyğundur": r["safe"], "Bal": round(r["score"]["total"], 4),
-        "İtki (kW)": round(r["metrics"]["p_loss_mw"] * 1000, 2) if "metrics" in r else None,
-        "Vmin (pu)": round(r["metrics"]["vmin_pu"], 4) if "metrics" in r else None,
-        "Q (MVAr)": round(r["metrics"]["q_source_mvar"], 3) if "metrics" in r else None,
-    } for r in rows]).sort_values(["Uyğundur", "Bal"], ascending=[False, True])
+def show_topology(net):
+    dot = ['graph Şəbəkə {', 'graph [rankdir=LR, bgcolor="transparent"]',
+           'node [shape=box, style="rounded,filled", fillcolor="#17263d", color="#5587a8", fontcolor="white"]']
+    source = int(net.ext_grid.bus.iloc[0])
+    for bus in net.bus.index:
+        label = T["source_node"] if int(bus) == source else T["bus_node"].format(number=int(bus))
+        dot.append(f'b{int(bus)} [label="{label}"]')
+    for _, line in net.line.iterrows():
+        dot.append(f'b{int(line.from_bus)} -- b{int(line.to_bus)}')
+    for _, trafo in net.trafo.iterrows():
+        dot.append(f'b{int(trafo.hv_bus)} -- b{int(trafo.lv_bus)} [color="#f8b560", penwidth=3]')
+    for number, shunt in enumerate(net.shunt.itertuples(), 1):
+        dot.append(f'c{number} [label="{T["cap_node"].format(number=number)}", fillcolor="#275354"]')
+        dot.append(f'c{number} -- b{int(shunt.bus)} [style=dashed]')
+    st.graphviz_chart("\n".join(dot + ['}']), width="stretch")
 
 
-@st.cache_data(show_spinner="96 × 3 interval hesablanır…")
-def cached_day(model: str, seed: int):
+def candidate_frame(rows):
+    c = T["candidate_columns"]
+    records = []
+    for row in rows:
+        records.append({c[i]: T["on"] if row["caps"][i] else T["off"] for i in range(3)} |
+                       {c[3]: row["tap"], c[4]: T["technical_yes"] if row["safe"] else T["technical_no"],
+                        c[5]: round(row["score"]["total"], 4),
+                        c[6]: round(row["metrics"]["p_loss_mw"] * 1000, 1) if "metrics" in row else None,
+                        c[7]: round(row["metrics"]["vmin_pu"], 3) if "metrics" in row else None,
+                        c[8]: round(row["metrics"]["q_source_mvar"], 2) if "metrics" in row else None})
+    return pd.DataFrame(records).sort_values(c[5])
+
+
+@st.cache_data(show_spinner=T["day_spinner"])
+def cached_day(model, seed):
     return run_day(cfg, model, seed=seed)
 
 
-@st.cache_data(show_spinner="Sintetik tarix üzərində proqnoz yoxlanır…")
+@st.cache_data(show_spinner=T["forecast_spinner"])
 def cached_forecast():
     return evaluate_forecasts(cfg)
 
 
-st.sidebar.title("⚡ VoltVAR AI")
-model = st.sidebar.selectbox("Şəbəkə modeli", ["synthetic", "ieee33"],
-                             format_func=lambda v: "Sintetik 35/10 kV" if v == "synthetic" else "IEEE 33-bus + OLTC")
-scenario = st.sidebar.selectbox("Ssenari", ["normal", "heavy", "reduction", "evening"],
-                                format_func=lambda v: {"normal": "Normal iş rejimi", "heavy": "Ağır sənaye / motor yükü", "reduction": "Qəfil yük azalması", "evening": "Axşam piki"}[v])
-seed = int(st.sidebar.number_input("Reproduksiya seed", min_value=0, value=42))
-st.sidebar.subheader("Avadanlıq vəziyyəti")
-available = tuple(st.sidebar.checkbox(f"CB{i} mövcuddur", value=True) for i in (1, 2, 3))
-tap_locked = st.sidebar.checkbox("OLTC kilidlidir", value=False)
-forecast_mode = st.sidebar.checkbox("15 dəqiqəlik proqnoz dəstəyi", value=False)
-if st.sidebar.button("Vaxtı 15 dəqiqə irəli apar"):
-    st.session_state.device_state.minute += 15
-st.sidebar.caption(f"Simulyasiya vaxtı: {st.session_state.device_state.minute if 'device_state' in st.session_state else 0} dəq")
-if st.sidebar.button("Sıfırla", width="stretch"):
-    st.session_state.device_state = DeviceState(controller="VoltVAR AI")
-    st.session_state.history = []
-    st.session_state.outcome = None
-    st.session_state.day_result = None
-    st.rerun()
+def forecast_factors():
+    _, examples = cached_forecast()
+    p = examples[(examples.horizon_min == 15) & (examples.target == "p_mw")].iloc[0]
+    q = examples[(examples.horizon_min == 15) & (examples.target == "q_mvar")].iloc[0]
+    p_ratio = max(0.5, min(1.5, p.next_forecast / p.latest_actual))
+    q_ratio = max(0.5, min(1.5, q.next_forecast / q.latest_actual))
+    return {"_p_scale": p_ratio, "_q_scale": q_ratio / p_ratio}
 
-if "device_state" not in st.session_state or st.session_state.get("active_model") != model:
-    st.session_state.device_state = DeviceState(controller="VoltVAR AI")
-    st.session_state.active_model = model
-    st.session_state.history = []
-    st.session_state.outcome = None
-    st.session_state.day_result = None
-state = st.session_state.device_state
+
+st.sidebar.title("⚡ " + T["title"])
+model = st.sidebar.selectbox(T["model"], list(MODEL_NAMES), format_func=MODEL_NAMES.get)
+view = st.sidebar.radio(T["view_mode"], (T["presentation"], T["engineering"]))
+engineering = view == T["engineering"]
+if st.session_state.get("active_model") != model:
+    clear_demo()
+    st.session_state["active_model"] = model
+if st.sidebar.button(T["reset"], use_container_width=True):
+    clear_demo()
+    st.rerun()
+with st.sidebar.expander(T["glossary"]):
+    for term, definition in GLOSSARY.items():
+        st.markdown(f"**{term}** — {definition}")
+with st.sidebar.expander(T["advanced_settings"]):
+    seed = st.number_input(T["advanced_seed"], min_value=0, value=int(cfg["profile"]["seed"]), step=1, key="seed_input")
+    available = tuple(st.checkbox(T["advanced_cap"].format(number=i), value=True, key=f"cap_available_{i}")
+                      for i in (1, 2, 3))
+    tap_locked = st.checkbox(T["advanced_tap_lock"], key="tap_locked")
+    use_forecast = st.checkbox(T["forecast_support"], key="use_forecast")
+    if st.button(T["advanced_time"]):
+        st.session_state.setdefault("device_state", DeviceState()).minute += 15
+    st.caption(T["advanced_time_value"].format(minute=st.session_state.get("device_state", DeviceState()).minute))
+    st.caption(T["advanced_cap_note"])
+
+st.session_state.setdefault("workflow_step", 0)
+st.session_state.setdefault("selected_mode", "normal")
+st.session_state.setdefault("applied_mode", "normal")
+st.session_state.setdefault("device_state", DeviceState())
+state = st.session_state["device_state"]
+scenario = st.session_state["applied_mode"]
 net = build_network(model, cfg)
-set_loads(net, scenario, cfg)
 try:
+    set_loads(net, scenario, cfg)
     current = run_powerflow(net, state.caps, state.tap, cfg)
-except PowerFlowError as exc:
-    st.error(str(exc))
+except PowerFlowError:
+    st.error(T["flow_error"])
+    st.stop()
+st.session_state.setdefault("baseline_metrics", current)
+
+if st.session_state["workflow_step"] == 0:
+    st.title(T["title"])
+    st.subheader(T["subtitle"])
+    st.write(T["purpose"])
+    st.subheader(T["how_demo"])
+    for start in (0, 2):
+        for column, (number, sentence) in zip(st.columns(2),
+                                              enumerate(T["demo_steps"][start:start + 2], start + 1)):
+            column.markdown(f"**{number}.** {sentence}")
+    if st.button(T["start"], type="primary", use_container_width=True):
+        go_to(1)
+    st.info(T["decision_support"])
     st.stop()
 
-st.title("VoltVAR AI")
-st.caption("Paylayıcı elektrik şəbəkələrində adaptiv gərginlik və reaktiv güc optimallaşdırma sistemi")
-st.warning("Sintetik nümayiş şəbəkəsi — rəsmi Azərişıq şəbəkə modeli deyil. IEEE 33-bus üzərindəki OLTC və kondensatorlar əlavə edilmişdir.")
-st.info("QƏRAR DƏSTƏYİ: bu tətbiq xarici avadanlığa komanda göndərmir. Göstərilən texniki göstəricilər AC power flow nəticəsidir.")
+step = st.session_state["workflow_step"]
+st.progress(step / len(STEPS), text=f"{step}/{len(STEPS)} · {STEPS[step - 1]}")
+if "nav_target" in st.session_state:
+    st.session_state["navigation"] = st.session_state.pop("nav_target")
+st.session_state.setdefault("navigation", step)
+chosen_step = st.radio(T["step_navigation"], (1, 2, 3, 4), horizontal=True,
+                       format_func=lambda i: f"{i}. {STEPS[i - 1]}", key="navigation")
+if chosen_step != step:
+    st.session_state["workflow_step"] = chosen_step
+    st.rerun()
+st.title(STEPS[step - 1])
+st.caption(T["synthetic_warning"] if model == "synthetic" else T["ieee_warning"])
 
-tabs = st.tabs(["Şəbəkəyə baxış", "Volt/VAR vəziyyəti", "Ssenari simulyatoru", "Optimallaşdırma",
-                "Əvvəl / Sonra", "24 saatlıq müqayisə", "AI yük proqnozu", "Model necə işləyir?",
-                "Metodologiya və fərziyyələr", "Gələcək SCADA inteqrasiyası"])
+if step == 1:
+    st.subheader(T["current_question"])
+    show_status(current)
+    st.caption(T["unit_note"])
+    show_cards(current)
+    st.caption(T["bound_note"].format(low=cfg["operating"]["voltage_min_pu"],
+                                      high=cfg["operating"]["voltage_max_pu"]))
+    st.caption(T["status_basis"])
+    with st.expander(T["topology"]):
+        st.write(T["topology_help"])
+        show_topology(net)
+    st.info(T["next_current"])
+    if st.button(T["next"], type="primary"):
+        go_to(2)
 
-with tabs[0]:
-    st.subheader("Cari şəbəkə")
-    show_metrics(current)
-    voltage_chart(current)
-    st.caption("Gərginlik sərhədləri 0.95–1.05 pu: yalnız SİMULYASİYA İŞ SƏRHƏDİ, hüquqi limit deyil.")
-    st.subheader("Radial topologiya")
-    edges = "\n".join(f'"{net.bus.at[r.from_bus, "name"]}" -> "{net.bus.at[r.to_bus, "name"]}";' for _, r in net.line.iterrows())
-    transformer = net.trafo.iloc[0]
-    st.graphviz_chart(f'digraph {{rankdir=LR; node [shape=box]; "{net.bus.at[transformer.hv_bus, "name"]}" -> "{net.bus.at[transformer.lv_bus, "name"]}" [label="OLTC"]; {edges}}}', width="stretch")
-
-with tabs[1]:
-    st.subheader("Ölçülən Volt/VAR vəziyyəti")
-    show_metrics(current)
-    st.write(f"Maksimum xətt yüklənməsi: **{current['max_line_loading_percent']:.1f}%**; transformator: **{current['max_trafo_loading_percent']:.1f}%**; pik xətt cərəyanı: **{current['peak_line_current_ka']:.3f} kA**")
-    st.write(f"Kondensator inyeksiyası: **{current['capacitor_injection_mvar']:.2f} MVAr**; tap: **{state.tap}**; gərginlik pozuntusu: **{current['voltage_violations']} şin**")
-    st.caption("PF=1 tək məqsəd deyil: aşağı itki, uyğun gərginlik və az avadanlıq əməliyyatı birlikdə qiymətləndirilir.")
-
-with tabs[2]:
-    st.subheader("Canlı ssenari")
-    st.write("Ssenari seçimi yükün aktiv və reaktiv hissəsini dəyişir. Yük azalması zamanı əvvəlki kondensator vəziyyəti saxlanır. CB üçün 30 dəqiqəlik minimum gözləmə var; sınaqdan əvvəl vaxtı irəli aparın.")
-    if st.button("Ssenarini tətbiq et"):
-        st.session_state.history.append({"Ssenari": scenario, "Mənbə Q (MVAr)": current["q_source_mvar"],
-                                         "PF": current["source_pf"], "İtki (kW)": current["p_loss_mw"] * 1000,
-                                         "Vmin (pu)": current["vmin_pu"], "CB": state.caps, "Tap": state.tap})
-        st.success("Ssenari AC power flow ilə hesablandı.")
-    if st.session_state.history:
-        st.dataframe(pd.DataFrame(st.session_state.history), hide_index=True, width="stretch")
-
-with tabs[3]:
-    st.subheader("Mümkün avadanlıq variantlarını yoxla")
-    st.write("Hər uyğun CB/OLTC kombinasiyası üçün ayrıca AC power flow aparılır. Təhlükəsiz variantlar normallaşdırılmış bal üzrə sıralanır.")
-    if st.button("Optimallaşdır", type="primary"):
+elif step == 2:
+    st.write(T["change_mode_help"])
+    for start in (0, 2):
+        for col, key in zip(st.columns(2), list(SCENARIOS)[start:start + 2]):
+            with col.container(border=True):
+                title, description = SCENARIOS[key]
+                st.subheader(title)
+                st.write(description)
+                if st.button(f"{T['select']} · {title}", key=f"select_{key}"):
+                    st.session_state["selected_mode"] = key
+    selected = st.session_state["selected_mode"]
+    st.info(T["selected_mode"].format(name=SCENARIOS[selected][0]))
+    remaining = max((last + cfg["operating"]["capacitor_dwell_minutes"] - state.minute
+                     for last in state.cb_last if last > -100000), default=0)
+    wait = False
+    if selected == "reduction" and remaining > 0:
+        st.caption(T["wait_explain"].format(minutes=remaining))
+        wait = st.checkbox(T["wait_interval"], key="wait_dwell")
+    if st.button(T["apply"], type="primary"):
+        previous = current
+        if wait:
+            state.minute += remaining
+        set_loads(net, selected, cfg)
         try:
-            forecast_factors = None
-            if forecast_mode:
-                _, examples = cached_forecast()
-                p = examples[(examples.horizon_min == 15) & (examples.target == "p_mw")].iloc[0]
-                q = examples[(examples.horizon_min == 15) & (examples.target == "q_mvar")].iloc[0]
-                p_ratio = max(0.5, min(1.5, p.next_forecast / p.latest_actual))
-                q_ratio = max(0.5, min(1.5, q.next_forecast / q.latest_actual))
-                forecast_factors = {"_p_scale": p_ratio, "_q_scale": q_ratio / p_ratio}
+            updated = run_powerflow(net, state.caps, state.tap, cfg)
+        except PowerFlowError:
+            st.error(T["flow_error"])
+        else:
+            st.session_state["regime_before"] = previous
+            st.session_state["regime_metrics"] = updated
+            st.session_state["applied_mode"] = selected
+            st.session_state.pop("outcome", None)
+            st.rerun()
+    if "regime_metrics" in st.session_state:
+        st.success(T["applied"])
+        st.subheader(T["what_changed"])
+        for line in change_lines(st.session_state["regime_before"], st.session_state["regime_metrics"]):
+            st.write("• " + line)
+        show_status(st.session_state["regime_metrics"])
+        st.caption(T["next_problem"])
+        if st.button(T["next"], key="next_problem", type="primary"):
+            go_to(3)
+    else:
+        st.caption(T["not_applied"])
+
+elif step == 3:
+    outcome = st.session_state.get("outcome")
+    problem_metrics = outcome["before"] if outcome else current
+    st.subheader(T["current_problem"])
+    show_status(problem_metrics)
+    st.write(f"{METRICS['q_source_mvar'][0]}: **{formatted_value(problem_metrics, 'q_source_mvar')}** · "
+             f"{METRICS['vmin_pu'][0]}: **{formatted_value(problem_metrics, 'vmin_pu')}** · "
+             f"{METRICS['p_loss_mw'][0]}: **{formatted_value(problem_metrics, 'p_loss_mw')}**")
+    if "regime_metrics" not in st.session_state:
+        st.caption(T["no_regime"])
+    if st.button(T["optimize"], type="primary"):
+        try:
+            pre_state = copy.deepcopy(state)
             outcome = optimize(net, state, scenario, cfg, available=available, tap_locked=tap_locked,
-                               forecast_factors=forecast_factors)
-            st.session_state.outcome = outcome
-            st.session_state.device_state = outcome["state"]
-            st.session_state.device_state.minute += 15
-            st.session_state.history.append({"Ssenari": scenario + " → optimallaşdırma",
-                                             "Mənbə Q (MVAr)": outcome["after"]["q_source_mvar"],
-                                             "PF": outcome["after"]["source_pf"],
-                                             "İtki (kW)": outcome["after"]["p_loss_mw"] * 1000,
-                                             "Vmin (pu)": outcome["after"]["vmin_pu"],
-                                             "CB": outcome["state"].caps, "Tap": outcome["state"].tap})
-        except (PowerFlowError, RuntimeError) as exc:
-            st.error(str(exc))
-    outcome = st.session_state.outcome
+                               forecast_factors=forecast_factors() if use_forecast else None)
+            st.session_state["pre_optimization_state"] = pre_state
+            st.session_state["outcome"] = outcome
+            st.session_state["device_state"] = outcome["state"]
+            st.session_state["device_state"].minute += 15
+            st.rerun()
+        except (PowerFlowError, RuntimeError):
+            st.error(T["flow_error"])
+    outcome = st.session_state.get("outcome")
     if outcome:
         if outcome["status"] != "FEASIBLE":
-            st.warning("Tam uyğun variant tapılmadı. Bu, yalnız ehtiyat tövsiyədir; operator yoxlamalıdır.")
-        st.success(outcome["explanation"])
-        st.dataframe(candidate_view(outcome["candidates"]), hide_index=True, width="stretch")
-        with st.expander("Mühəndislik detalları"):
-            st.json({"converged": outcome["after"]["converged"],
-                     "iterations": outcome["after"]["powerflow_iterations"],
-                     "power_balance_error_mw": outcome["after"]["p_balance_error_mw"],
-                     "candidate_count": len(outcome["candidates"]),
-                     "objective_components": outcome["selected"]["score"]})
+            st.warning(T["contingency"])
+        st.subheader(T["recommendation"])
+        for line in equipment_lines(st.session_state["pre_optimization_state"], outcome):
+            st.success(line)
+        st.subheader(T["why_selected"])
+        for heading, detail in explanation_sections(st.session_state["pre_optimization_state"], outcome, cfg).items():
+            st.markdown(f"**{heading}** {detail}")
+        if engineering:
+            with st.expander(T["other_candidates"]):
+                st.caption(T["candidate_score_help"])
+                st.dataframe(candidate_frame(outcome["candidates"]), hide_index=True, width="stretch")
+            with st.expander(T["engineering_details"]):
+                st.write(T["advanced_solver"].format(converged=T["yes"] if outcome["after"]["converged"] else T["no"],
+                    iterations=outcome["after"]["powerflow_iterations"],
+                    balance=outcome["after"]["p_balance_error_mw"], count=len(outcome["candidates"])))
+                st.write(T["advanced_objective"])
+                st.json(outcome["selected"]["score"])
+        st.info(T["next_optimization"])
+        if st.button(T["results"], type="primary"):
+            go_to(4)
 
-with tabs[4]:
-    st.subheader("Fiziki modeldə hesablanan əvvəl / sonra")
-    if st.session_state.outcome:
-        result = st.session_state.outcome
-        before, after = result["before"], result["after"]
-        comparison = pd.DataFrame([{
-            "Göstərici": title, "Əvvəl": before[key] * scale,
-            "Sonra": after[key] * scale, "Fərq": (after[key] - before[key]) * scale,
-            "Vahid": unit,
-        } for title, key, scale, unit in [
-            ("Mənbə P", "p_source_mw", 1, "MW"),
-            ("Mənbə Q", "q_source_mvar", 1, "MVAr"),
-            ("Güc əmsalı", "source_pf", 1, ""),
-            ("Aktiv itki", "p_loss_mw", 1000, "kW"),
-            ("Vmin", "vmin_pu", 1, "pu"),
-            ("Vmax", "vmax_pu", 1, "pu"),
-            ("Pik xətt cərəyanı", "peak_line_current_ka", 1, "kA"),
-            ("Transformator yüklənməsi", "max_trafo_loading_percent", 1, "%"),
-        ]])
-        st.dataframe(comparison.style.format({"Əvvəl": "{:.3f}", "Sonra": "{:.3f}", "Fərq": "{:+.3f}"}), hide_index=True, width="stretch")
-        voltage_chart(result["before"], result["after"])
+elif step == 4:
+    outcome = st.session_state.get("outcome")
+    if not outcome:
+        st.info(T["no_result"])
+        if st.button(T["optimize"], type="primary"):
+            go_to(3)
     else:
-        st.info("Əvvəlcə optimallaşdırmanı işə salın.")
+        before, after = outcome["before"], outcome["after"]
+        st.subheader(T["result_title"])
+        st.write(T["result_subtitle"])
+        st.dataframe(pd.DataFrame(comparison_rows(before, after, cfg)), hide_index=True, width="stretch")
+        st.subheader(T["result_conclusion"])
+        st.success(result_summary(before, after, cfg,
+            equipment_lines(st.session_state["pre_optimization_state"], outcome)))
+        if outcome["status"] != "FEASIBLE":
+            st.warning(T["contingency"])
+        st.subheader(T["voltage_profile"])
+        voltage_chart(before, after)
+        st.caption(T["bound_note"].format(low=cfg["operating"]["voltage_min_pu"],
+                                          high=cfg["operating"]["voltage_max_pu"]))
+        st.info(T["next_results"])
 
-with tabs[5]:
-    st.subheader("Eyni 96 yük intervalında üç idarəetmə üsulu")
-    if st.button("24 saatlıq müqayisəni hesabla"):
-        st.session_state.day_result = cached_day(model, seed)
-    if st.session_state.day_result:
-        day = st.session_state.day_result
-        st.dataframe(day.summary, hide_index=True, width="stretch")
-        fig = go.Figure()
-        for label, frame in day.samples.groupby("controller", sort=False):
-            fig.add_trace(go.Scatter(x=frame.timestamp, y=frame.vmin_pu, name=label))
-        fig.update_layout(yaxis_title="Vmin (pu)", paper_bgcolor="#17263d", plot_bgcolor="#17263d", font_color="#e6eef8")
-        st.plotly_chart(fig, width="stretch")
-        switch_fig = go.Figure()
-        for label, frame in day.samples.groupby("controller", sort=False):
-            switch_fig.add_trace(go.Scatter(x=frame.timestamp, y=frame.cb_operations + frame.tap_operations,
-                                            mode="lines", name=label))
-        switch_fig.update_layout(yaxis_title="Yığılmış CB + OLTC əməliyyatı", paper_bgcolor="#17263d",
-                                 plot_bgcolor="#17263d", font_color="#e6eef8")
-        st.plotly_chart(switch_fig, width="stretch")
-        st.dataframe(day.samples[["timestamp", "controller", "cb1", "cb2", "cb3", "tap", "p_loss_kw", "vmin_pu"]], hide_index=True, width="stretch")
-        st.download_button("CSV endir", day.samples.to_csv(index=False), "voltvar_24h.csv", "text/csv")
-    st.caption("No Control vəziyyəti sabit saxlayır; Traditional lokal PF/gərginlik hədlərinə baxır; VoltVAR şəbəkə üzrə AC nəticələri və keçid xərcini müqayisə edir.")
-
-with tabs[6]:
-    st.subheader("Sintetik tarix üzərində P/Q proqnozu")
-    st.write("Proqnoz avadanlıq qərarı vermir. Seçilən modelin yük proqnozu sonradan AC power flow namizədlərində yoxlanır.")
-    if st.button("Proqnozu təlim və test et"):
-        st.session_state.forecast_result = cached_forecast()
-    if st.session_state.get("forecast_result"):
-        scores, examples = st.session_state.forecast_result
-        st.dataframe(scores, hide_index=True, width="stretch")
-        st.dataframe(examples, hide_index=True, width="stretch")
-    st.caption("SİNTETİK PROQNOZ TƏLİM MƏLUMATLARI; 70 gün; zaman ardıcıllığı üzrə 80/20 bölgü; gələcək məlumat əlamətlərə daxil edilmir.")
-
-with tabs[7]:
-    st.markdown("""### Fizikadan operator tövsiyəsinə
-    1. Şəbəkə ölçüləri və sintetik yük P/Q alınır.
-    2. AC power flow hər şində gərginlik, xətdə cərəyan və itkini hesablayır.
-    3. Dwell, günlük əməliyyat və avadanlıq mövcudluğu yoxlanır.
-    4. Üç CB və yaxın OLTC tap variantları yaradılır.
-    5. Hər variant ayrıca AC power flow ilə sınaqdan keçirilir.
-    6. Təhlükəsiz variantlar itki, gərginlik, mənbə Q və keçid xərci üzrə sıralanır.
-    7. Əvvəl / sonra nəticəsi operatora izah edilir.
-
-    **PF=1 niyə tək hədəf deyil?** Həddən artıq kompensasiya gərginliyi yüksəldə və əlavə açma/bağlama yarada bilər.
-    """)
-
-with tabs[8]:
-    st.markdown("""### Mühəndislik fərziyyələri
-    Bütün fider parametrləri `config/config.yaml` daxilində sintetik fərziyyələrdir. Kondensator `q_mvar < 0` pandapower yük işarə konvensiyasına görə reaktiv inyeksiyadır. Mənbə güc əmsalı `|P|/sqrt(P²+Q²)` ilə hesablanır.
-
-    İtki xətt və transformator `pl_mw` cəmidir. 24 saat enerji itkisi hər 15 dəqiqəlik kW itkisini 0.25 saata vurub cəmləyir. Gərginlik 0.95–1.05 pu **simulyasiya iş sərhədidir**.
-    """)
-    st.json({"operating": cfg["operating"], "objective": cfg["objective"], "synthetic": cfg["synthetic"]})
-
-with tabs[9]:
-    st.markdown("""### Gələcək inteqrasiya yolu
-    SCADA/ADMS ölçüləri oxunur → keyfiyyət və köhnəlik yoxlanır → topologiya təsdiqlənir → AC power flow və namizədlər hesablanır → operator tövsiyəni yoxlayır.
-
-    Xətalı telemetriya və ya power-flow uğursuzluğu zamanı tövsiyə verilmir. Rabitə pozularsa lokal idarəetmə qüvvədə qalır; manual override həmişə mövcuddur. Burada real SCADA inteqrasiyası yoxdur.
-    """)
-
+if engineering:
+    with st.expander(T["more_analyses"]):
+        topic = st.selectbox(T["analysis_choice"],
+            (T["day_title"], T["forecast_title"], T["method_title"], T["scada_title"], T["advanced_config"]))
+        if topic == T["day_title"]:
+            st.write(T["day_intro"])
+            if st.button(T["day_run"]):
+                st.session_state["day_result"] = cached_day(model, int(seed))
+            day = st.session_state.get("day_result")
+            if day is not None:
+                summary = day.summary.copy()
+                summary["controller"] = summary["controller"].map(CONTROLLERS)
+                st.dataframe(summary.rename(columns=T["day_columns"]), hide_index=True, width="stretch")
+                fig = go.Figure()
+                for name, frame in day.samples.groupby("controller", sort=False):
+                    fig.add_trace(go.Scatter(x=frame.timestamp, y=frame.vmin_pu, name=CONTROLLERS[name]))
+                fig.update_layout(yaxis_title=T["day_chart_voltage"], paper_bgcolor="#17263d",
+                    plot_bgcolor="#17263d", font_color="#e6eef8")
+                st.plotly_chart(fig, width="stretch")
+                samples = day.samples.copy()
+                samples["controller"] = samples["controller"].map(CONTROLLERS)
+                samples = samples.rename(columns=T["day_sample_columns"])
+                for column in (T["day_sample_columns"][key] for key in ("cb1", "cb2", "cb3")):
+                    samples[column] = samples[column].map({True: T["on"], False: T["off"]})
+                columns = tuple(T["day_sample_columns"].values())
+                st.dataframe(samples[list(columns)], hide_index=True, width="stretch")
+                st.download_button(T["download"], samples.to_csv(index=False), "voltvar_24s.csv", "text/csv")
+        elif topic == T["forecast_title"]:
+            st.write(T["forecast_intro"])
+            if st.button(T["forecast_run"]):
+                st.session_state["forecast_result"] = cached_forecast()
+            forecast = st.session_state.get("forecast_result")
+            if forecast is not None:
+                scores, _ = forecast
+                table = scores.copy()
+                table["target"] = table["target"].map(T["forecast_targets"])
+                table["model"] = table["model"].map(MODEL_LABELS)
+                st.dataframe(table.rename(columns=T["forecast_columns"]), hide_index=True, width="stretch")
+                st.caption(T["forecast_note"])
+        elif topic == T["method_title"]:
+            st.markdown(T["methodology"])
+            st.markdown(f"**{T['cause_title']}** {T['cause_flow']}")
+            st.markdown(T["compensation_flow"])
+        elif topic == T["scada_title"]:
+            st.write(T["scada_note"])
+        else:
+            with st.expander(T["engineering_details"]):
+                st.json({"operating": cfg["operating"], "objective": cfg["objective"],
+                         "synthetic": cfg["synthetic"]})

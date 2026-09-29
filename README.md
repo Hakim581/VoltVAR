@@ -1,21 +1,28 @@
 # VoltVAR AI
 
-**Paylayıcı elektrik şəbəkələrində adaptiv gərginlik və reaktiv güc optimallaşdırma sistemi**
+## VoltVAR AI nə edir?
 
-VoltVAR AI 35/10 kV sintetik radial fider və dəyişdirilmiş IEEE 33-bus benchmark üzərində işləyən qərar dəstəyi prototipidir. 15 dəqiqəlik yük dəyişmələrini AC power flow ilə hesablayır, üç açılıb-bağlanan kondensator bankını və bir OLTC-ni yoxlayır, təhlükəsiz namizədlər arasından itki, gərginlik, reaktiv idxal və əməliyyat xərcinə görə tövsiyə seçir. Nəticə xarici avadanlığa göndərilmir.
+VoltVAR AI paylayıcı elektrik şəbəkəsində reaktiv güc və gərginliyin koordinasiyalı tənzimlənməsini nümayiş etdirən qərar dəstəyi prototipidir. Şəbəkənin cari elektrik rejimini hesablayır, müxtəlif yük şəraitini sınaqdan keçirir, statik kondensator batareyaları (SKB) və yük altında gərginliyin tənzimlənməsi qurğusu (YAGT/OLTC) üçün variantları yoxlayır. Seçilən variantın səbəbini və hesablanmış nəticəsini operatora Azərbaycan dilində göstərir.
 
-> **Sintetik nümayiş şəbəkəsi — rəsmi Azərişıq şəbəkə modeli deyil.** Şəbəkə, yük profili, sərhədlər və ölçülər sintetik mühəndislik fərziyyələridir. 0.95–1.05 pu yalnız simulyasiya iş sərhədidir.
+İlk ekranda layihənin məqsədi və nümayiş ardıcıllığı görünür. **Təqdimat rejimi** əsas addımları və nəticəni göstərir. **Mühəndislik rejimi** variant cədvəlini, hesablama detallarını, 24 saatlıq müqayisəni, yük proqnozunu və fərziyyələri açır. [Terminlər lüğəti](docs/terminology_az.md) interfeysdə də yan paneldən əldə edilir.
 
-## İşləyən hissələr
+## 3 addımlıq demo
 
-- `pandapower` AC power flow; şin gərginliyi, xətt cərəyanı/yüklənməsi, transformator yüklənməsi, mənbə P/Q və aktiv itki.
-- 16 şinli (35 kV mənbə daxil) sintetik model; paketdəki `case33bw()` üzərində ayrıca 35 kV mənbə, OLTC və üç CB əlavə edilən IEEE 33-bus model.
-- Normal, ağır motor, qəfil yük azalması və axşam piki ssenariləri; 96 interval üçün seeded residential/commercial/industrial/motor profilləri.
-- No Control, lokal hədlərlə Traditional və hər uyğun namizədi yoxlayan VoltVAR AI müqayisəsi. CB dwell, tap intervalı, gündəlik əməliyyat hədləri, avadanlıq mövcudluğu və kilid vəziyyəti ardıcıl simulyasiyada saxlanır.
-- Ayrı sintetik 70 günlük tarixdə 15/30/60 dəqiqə P/Q proqnozu: persistence və `HistGradientBoostingRegressor`. Bu Windows hostunda tətbiq nəzarəti scikit-learn DLL-ni bloklayarsa, öyrədilmiş NumPy ridge modeli istifadə edilir və nəticədə adı açıq göstərilir. Test bölgüsü xronolojidir.
-- Operator üçün Azərbaycanca Streamlit interfeysi, namizəd cədvəli, hesablanmış əvvəl/sonra, 24 saatlıq müqayisə, CSV ixracı və mühəndislik detalları.
+1. **NÜMAYİŞƏ BAŞLA** düyməsini basın, cari şəbəkə vəziyyətini və altı əsas göstəricini nəzərdən keçirin.
+2. **AĞIR SƏNAYE YÜKÜ** iş rejimini seçib **İŞ REJİMİNİ TƏTBİQ ET** düyməsini basın. “NƏ DƏYİŞDİ?” hissəsində mənbədən alınan reaktiv güc, güc əmsalı, aktiv güc itkisi və ən aşağı şin gərginliyinin hesablanmış dəyişməsini oxuyun.
+3. **ŞƏBƏKƏNİ OPTİMALLAŞDIR** düyməsini basın. Tövsiyə olunan SKB/YAGT vəziyyətini və səbəbini yoxlayın, sonra **NƏTİCƏLƏRƏ BAX** ilə yeddi göstəricinin əvvəl/sonra cədvəlini və gərginlik profilini müqayisə edin.
 
-## İşə salma
+Nümayişi davam etdirmək üçün yükün kəskin azalması rejimini tətbiq etmək olar. Kondensator batareyası yeni qoşulubsa, minimum keçid intervalının tamamlanması üçün simulyasiya vaxtını açıq seçimlə irəli aparın.
+
+## Texniki metodologiya
+
+Tətbiq `pandapower` ilə hər avadanlıq variantı üçün **elektrik rejiminin hesablanmasını** aparır. Aktiv və reaktiv güc, şin gərginlikləri, xətt cərəyanı, transformator yüklənməsi və aktiv güc itkisi fiziki modelin nəticələridir. Optimallaşdırma alqoritmi texniki sərhədləri, itki və gərginlik göstəricilərini, mənbədən alınan reaktiv gücü və qoşma-açma əməliyyatlarını birlikdə qiymətləndirir. İnterfeysdəki şərhlər yalnız bu hesablanmış nəticələrdən hazırlanır.
+
+Sintetik 35/10 kV radial şəbəkə və ayrıca YAGT/SKB əlavə edilmiş IEEE 33-şin sınaq şəbəkəsi mövcuddur. 24 saatlıq müqayisə eyni 96 yük intervalında tənzimləməsiz, ənənəvi lokal və VoltVAR AI koordinasiyalı üsulları göstərir. Qısamüddətli yük proqnozu sintetik 70 günlük tarixdən 15, 30 və 60 dəqiqəlik aktiv/reaktiv güc qiymətlərini yoxlayır; idarəetmə qərarını özü vermir.
+
+Ətraflı məlumat: [arxitektura](docs/architecture.md), [metodologiya](docs/methodology.md), [fərziyyələr](docs/assumptions.md), [validasiya](docs/validation.md) və [terminologiya](docs/terminology_az.md).
+
+## Quraşdırma
 
 Python 3.12 tövsiyə edilir.
 
@@ -26,25 +33,10 @@ python -m venv .venv
 pip install -r requirements.txt
 streamlit run app.py
 python -m pytest -q
-python scripts/run_24h_comparison.py
-python scripts/run_acceptance_tests.py
 ```
 
-`scripts/run_acceptance_tests.py` ölçüləri `data/generated/acceptance.json`, tam 24 saatlıq cədvəli isə `data/generated/day_samples.csv` faylına yazır. Bu fayllar Git-ə daxil edilmir.
+Əlavə mühəndislik yoxlamaları üçün `python scripts/run_24h_comparison.py` və `python scripts/run_acceptance_tests.py` işlədilə bilər. Sonuncu skript nəticələri `data/generated/` qovluğuna yazır; həmin çıxışlar Git-də saxlanmır.
 
-## Beş dəqiqəlik nümayiş
+## Məhdudiyyətlər
 
-1. **Sıfırla** və sintetik şəbəkədə normal vəziyyəti göstər.
-2. **Ağır sənaye / motor yükü** seç; mənbə Q, PF, itki və Vmin dəyişməsini izlə.
-3. **Optimallaşdır**; seçilən CB/OLTC vəziyyətini və bütün namizədləri göstər.
-4. **Əvvəl / Sonra** tabında hesablanmış gərginlik profilini müqayisə et.
-5. Vaxtı ən az 30 dəqiqə irəli apar, **Qəfil yük azalması** seç və yenidən optimallaşdır; artıq kompensasiya aradan qaldırılmasını göstər.
-6. CB-ni deaktiv et və ya OLTC-ni kilidlə; tövsiyənin məhdudiyyətlərə əməl etdiyini göstər.
-7. 24 saatlıq müqayisəni və proqnoz testini aç.
-
-## Sərhədlər
-
-Real telemetriya, SCADA yazma kanalı, sahə kalibrasiyası, qeyri-balanslı üçfazalı model, hava proqnozu və kommersiya optimallaşdırması yoxdur. IEEE modelindəki OLTC və CB standart benchmark hissəsi deyil; əlavə edilmiş versiyanın nəticələri ayrıca etiketlənir. Proqnoz keyfiyyəti yalnız sintetik tarix üzərində ölçülür. Bu versiya sahədə avtonom idarəetmə üçün deyil.
-
-Ətraflı məlumat: [arxitektura](docs/architecture.md), [metodologiya](docs/methodology.md), [fərziyyələr](docs/assumptions.md), [validasiya](docs/validation.md), [demo ssenarisi](docs/demo_script.md) və [müsabiqə sualları](docs/competition_notes.md).
-
+Bu prototipdə real telemetriya, SCADA yazma kanalı, sahə kalibrasiyası, qeyri-balanslı üçfazalı model və avtonom aparat idarəetməsi yoxdur. Sintetik şəbəkə rəsmi Azərişıq şəbəkə modeli deyil. **0.95–1.05 p.u.** aralığı yalnız prototipdə qəbul edilmiş simulyasiya iş intervalıdır, hüquqi xidmət norması kimi təqdim edilmir. IEEE sınaq şəbəkəsindəki YAGT və SKB standart modelə prototip məqsədilə əlavə olunub. Proqnoz keyfiyyəti yalnız sintetik tarixdə ölçülüb.

@@ -1,0 +1,84 @@
+# Every electrical value here is a synthetic engineering assumption.
+synthetic:
+  source_kv: 35.0
+  feeder_kv: 10.0
+  transformer_mva: 10.0
+  transformer_vk_percent: 3.0
+  transformer_vkr_percent: 0.8
+  transformer_pfe_kw: 8.0
+  transformer_i0_percent: 0.15
+  # Distances form a radial feeder. A branch joins buses 4->10 and 8->13.
+  lines:
+    - [0, 1, 0.9]
+    - [1, 2, 0.8]
+    - [2, 3, 0.8]
+    - [3, 4, 0.9]
+    - [4, 5, 0.8]
+    - [5, 6, 0.8]
+    - [6, 7, 0.7]
+    - [7, 8, 0.8]
+    - [8, 9, 0.8]
+    - [4, 10, 1.1]
+    - [10, 11, 0.9]
+    - [11, 12, 0.8]
+    - [8, 13, 0.8]
+    - [13, 14, 0.8]
+  line_r_ohm_per_km: 0.09
+  line_x_ohm_per_km: 0.08
+  line_c_nf_per_km: 8.0
+  line_max_i_ka: 0.42
+  # [bus, type, base active MW, normal power factor]
+  loads:
+    - [2, residential, 0.32, 0.94]
+    - [3, commercial, 0.38, 0.92]
+    - [4, residential, 0.40, 0.94]
+    - [5, industrial, 0.48, 0.89]
+    - [6, residential, 0.35, 0.94]
+    - [7, commercial, 0.42, 0.92]
+    - [8, industrial, 0.50, 0.89]
+    - [9, residential, 0.38, 0.94]
+    - [10, commercial, 0.37, 0.92]
+    - [11, motor, 0.65, 0.80]
+    - [12, industrial, 0.45, 0.89]
+    - [13, residential, 0.36, 0.94]
+    - [14, commercial, 0.34, 0.92]
+  # Sensitivity checks on the unloaded control state justify downstream siting.
+  capacitors:
+    - {name: CB1, bus: 7, mvar: 0.45}
+    - {name: CB2, bus: 11, mvar: 0.60}
+    - {name: CB3, bus: 14, mvar: 0.45}
+  tap_min: -5
+  tap_max: 5
+  tap_step_percent: 1.25
+benchmark:
+  capacitors:
+    - {name: CB1, bus: 17, mvar: 0.30}
+    - {name: CB2, bus: 24, mvar: 0.30}
+    - {name: CB3, bus: 32, mvar: 0.30}
+  transformer_mva: 5.0
+operating:
+  voltage_min_pu: 0.95 # simulation operating bound, not a utility legal limit
+  voltage_max_pu: 1.05
+  max_loading_percent: 100.0
+  capacitor_dwell_minutes: 30
+  tap_dwell_minutes: 15
+  capacitor_max_daily_operations: 12
+  tap_max_daily_operations: 16
+  local_tap_movement: 1
+objective: # prototype engineering weights; all components dimensionless
+  loss: 0.35
+  voltage: 0.30
+  reactive: 0.15
+  switching: 0.20
+  cb_switch_cost: 0.025
+  tap_switch_cost: 0.06
+  minimum_improvement: 0.005
+scenarios:
+  normal: {load_factor: 1.0, motor_factor: 1.0, motor_pf: 0.80}
+  heavy: {load_factor: 1.0, motor_factor: 2.0, motor_pf: 0.68}
+  reduction: {load_factor: 0.52, motor_factor: 0.65, motor_pf: 0.88}
+  evening: {load_factor: 1.24, motor_factor: 1.0, motor_pf: 0.80}
+profile:
+  seed: 42
+  intervals: 96
+  minutes: 15

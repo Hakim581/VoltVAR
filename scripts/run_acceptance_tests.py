@@ -2,6 +2,8 @@
 from pathlib import Path
 import json
 import sys
+import pandapower as pp
+import pandapower.networks as pn
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from voltvar.config import load_config
@@ -32,6 +34,8 @@ def main():
     locked = optimize(net, state, "heavy", cfg, tap_locked=True)
     daily = run_day(cfg)
     ieee = build_network("ieee33", cfg)
+    ieee_reference = pn.case33bw()
+    pp.runpp(ieee_reference, algorithm="nr", numba=False)
     ieee_base = optimize(ieee, DeviceState(controller="VoltVAR AI"), "normal", cfg)
     ieee_local = traditional(ieee, DeviceState(controller="Traditional"), "normal", cfg)
     forecast_scores, forecast_example = evaluate_forecasts(cfg)
@@ -46,6 +50,9 @@ def main():
         "daily_comparison": daily.summary.to_dict(orient="records"),
         "ieee33_before": compact(ieee_base["before"]), "ieee33_after": compact(ieee_base["after"]),
         "ieee33_traditional": compact(ieee_local["after"]),
+        "ieee33_unmodified_reference": {"p_loss_mw": float(ieee_reference.res_line.pl_mw.sum()),
+                                        "vmin_pu": float(ieee_reference.res_bus.vm_pu.min())},
+        "ieee33_action": {"caps": ieee_base["state"].caps, "tap": ieee_base["state"].tap},
         "ieee33_status": ieee_base["status"],
         "forecast_scores": forecast_scores.to_dict(orient="records"),
         "forecast_example": forecast_example.to_dict(orient="records"),

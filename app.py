@@ -150,8 +150,9 @@ with tabs[3]:
                 _, examples = cached_forecast()
                 p = examples[(examples.horizon_min == 15) & (examples.target == "p_mw")].iloc[0]
                 q = examples[(examples.horizon_min == 15) & (examples.target == "q_mvar")].iloc[0]
-                forecast_factors = {"_p_scale": max(0.5, min(1.5, p.next_forecast / p.latest_actual)),
-                                    "_q_scale": max(0.5, min(1.5, q.next_forecast / q.latest_actual))}
+                p_ratio = max(0.5, min(1.5, p.next_forecast / p.latest_actual))
+                q_ratio = max(0.5, min(1.5, q.next_forecast / q.latest_actual))
+                forecast_factors = {"_p_scale": p_ratio, "_q_scale": q_ratio / p_ratio}
             outcome = optimize(net, state, scenario, cfg, available=available, tap_locked=tap_locked,
                                forecast_factors=forecast_factors)
             st.session_state.outcome = outcome

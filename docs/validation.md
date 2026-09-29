@@ -49,6 +49,9 @@ VoltVAR namizədi CB1/CB2/CB3 ON, tap −1 oldu. **0.95 pu aşağı sərhədi ö
 
 ## Proqnoz və UI
 
-Ayrı 70 günlük sintetik tarix; zaman üzrə 80/20 bölgü (15 dəq üçün 5298 train, 1325 test). Bu Windows hostunda application-control qaydası scikit-learn DLL-ni blokladı, ona görə öyrədilmiş **NumPy ridge fallback** işlədildi. 15 dəq P: persistence MAE/RMSE `0.0750/0.0991 MW`, ridge `0.0611/0.0825 MW`. 15 dəq Q: persistence `0.0404/0.0524 MVAr`, ridge `0.0309/0.0412 MVAr`. Linux GitHub Actions-da scikit-learn HistGradientBoosting yolu ayrıca icra ediləcək; onun nəticəsi bu rəqəmlərlə eyni sayılmır.
+Ayrı 70 günlük sintetik tarix; zaman üzrə 80/20 bölgü (15 dəq üçün 5298 train, 1325 test). Bu Windows hostunda application-control qaydası scikit-learn DLL-ni blokladı, ona görə öyrədilmiş **NumPy ridge fallback** işlədildi. 15 dəq P: persistence MAE/RMSE `0.0750/0.0991 MW`, ridge `0.0611/0.0825 MW`. 15 dəq Q: persistence `0.0404/0.0524 MVAr`, ridge `0.0309/0.0412 MVAr`.
 
-Streamlit AppTest ilkin render və `Optimallaşdır` klikindən sonra exception qaytarmadı. Bu, brauzerdə vizual qəbul testini əvəz etmir. CI statusu uzaq branch workflow bitdikdən sonra yoxlanacaq.
+Linux GitHub Actions-da scikit-learn **HistGradientBoostingRegressor** həqiqətən təlim/test edildi: 15 dəq P MAE/RMSE `0.0542/0.0705 MW`, Q `0.0297/0.0387 MVAr`; eyni persistence bazası müvafiq olaraq `0.0750/0.0991 MW` və `0.0404/0.0524 MVAr` oldu. 30 və 60 dəqiqə nəticələri də acceptance çıxışında hesablandı.
+
+Streamlit AppTest ilkin render və `Optimallaşdır` klikindən sonra exception qaytarmadı. `streamlit run app.py --server.headless true` lokal serveri uğurla başlatdı. Bu, brauzerdə vizual qəbul testini əvəz etmir. [GitHub Actions run 36520712090](https://github.com/Hakim581/VoltVAR/actions/runs/36520712090) uğurlu bitdi: Linux `pytest` **16 passed** (88.18 s), acceptance script uğurlu.
+

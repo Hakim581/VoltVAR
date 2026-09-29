@@ -129,12 +129,20 @@ def explain(before: dict, after: dict, state: DeviceState, chosen: dict, table: 
     if chosen["tap"] != state.tap:
         changed.append(f"OLTC tap {state.tap} → {chosen['tap']}")
     action = ", ".join(changed) if changed else "Qurğular olduğu kimi saxlanır"
-    rejected = len(table) - 1
+    alternatives = [row for row in table if row is not chosen]
+    if alternatives:
+        other = min(alternatives, key=lambda r: (not r["safe"], r["violation"], r["score"]["total"]))
+        other_state = "/".join("ON" if on else "OFF" for on in other["caps"])
+        other_reason = ("iş sərhədlərini pozur" if not other["safe"] else
+                        f"balı {other['score']['total']:.3f} ilə daha yüksəkdir")
+        rejected_text = f"CB {other_state}, tap {other['tap']} variantı {other_reason}; cəmi {len(alternatives)} alternativ müqayisə edildi"
+    else:
+        rejected_text = "başqa uyğun keçid yoxdur"
     return (f"NƏ: {action}. SƏBƏB: mövcud yükdə şəbəkə üzrə AC power flow və çoxməqsədli bal qiymətləndirildi. "
             f"TƏSİR: itki {before['p_loss_mw']*1000:.1f} → {after['p_loss_mw']*1000:.1f} kW; "
             f"mənbə Q {before['q_source_mvar']:.2f} → {after['q_source_mvar']:.2f} MVAr; "
             f"Vmin {before['vmin_pu']:.3f} → {after['vmin_pu']:.3f} pu. "
-            f"DİGƏR VARİANTLAR: {rejected} uyğun alternativ nəticə ilə müqayisə edildi. Status: {status}.")
+            f"RƏDD EDİLƏN: {rejected_text}. Status: {status}.")
 
 
 def traditional(net, state: DeviceState, scenario: str, cfg: dict, factors: dict | None = None,

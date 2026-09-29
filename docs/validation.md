@@ -1,6 +1,6 @@
 # Validasiya — yerli deterministik V1 icrası
 
-Tarix: 2026-09-29. Komandalar: `python -m pytest -q` (**16 passed**, 108.38 s) və `python scripts/run_acceptance_tests.py` (tam ardıcıllıq icra edildi). Python 3.12, pandapower 3.5.5. 24 saatlıq müqayisə 96 ×15 dəqiqə, eyni seed 42 profili, üç ayrı controller state ilə aparılıb. Proqnoz default controller müqayisəsində söndürülüb.
+Tarix: 2026-09-29. Komandalar: `python -m pytest -q` (**16 passed**, 106.12 s) və `python scripts/run_acceptance_tests.py` (tam ardıcıllıq icra edildi). Python 3.12, pandapower 3.5.5. 24 saatlıq müqayisə 96 ×15 dəqiqə, eyni seed 42 profili, üç ayrı controller state ilə aparılıb. Proqnoz default controller müqayisəsində söndürülüb.
 
 | Sintetik snapshot | Normal | Ağır yük əvvəl | Ağır yük sonra | Yük azalma əvvəl | Yük azalma sonra |
 |---|---:|---:|---:|---:|---:|

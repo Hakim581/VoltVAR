@@ -47,4 +47,3 @@ python scripts/run_acceptance_tests.py
 Real telemetriya, SCADA yazma kanalı, sahə kalibrasiyası, qeyri-balanslı üçfazalı model, hava proqnozu və kommersiya optimallaşdırması yoxdur. IEEE modelindəki OLTC və CB standart benchmark hissəsi deyil; əlavə edilmiş versiyanın nəticələri ayrıca etiketlənir. Proqnoz keyfiyyəti yalnız sintetik tarix üzərində ölçülür. Bu versiya sahədə avtonom idarəetmə üçün deyil.
 
 Ətraflı məlumat: [arxitektura](docs/architecture.md), [metodologiya](docs/methodology.md), [fərziyyələr](docs/assumptions.md), [validasiya](docs/validation.md), [demo ssenarisi](docs/demo_script.md) və [müsabiqə sualları](docs/competition_notes.md).
-
